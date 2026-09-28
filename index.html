@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkup du projet pour Grist</title>
+<style>
+  :root {
+    --bg: #ffffff; --bg2: #f5f6f7; --fg: #262633; --muted: #6b6b7b; --border: #d9d9e0;
+    --accent: #16b378; --accent-fg: #ffffff; --danger: #d0342c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f1f26; --bg2: #2a2a33; --fg: #e8e8ee; --muted: #a0a0b0; --border: #3d3d4a;
+      --accent: #1dcb89; --accent-fg: #10231b; --danger: #ff6b61;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px; background: var(--bg); color: var(--fg);
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 16px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  button {
+    font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg2); color: var(--fg); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  #msg { padding: 12px; color: var(--muted); }
+  #msg.error { color: var(--danger); }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Checkup du projet</h1>
+  <button id="refresh" title="Relire la structure du document">↻</button>
+</header>
+<div id="msg">Chargement…</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function showMsg(text, isError) {
+  const m = $('msg');
+  m.textContent = text;
+  m.className = isError ? 'error' : '';
+  m.hidden = !text;
+}
+
+// --- Chargement de l'API Grist (SPEC § 3.2) ---
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => (window.grist ? resolve() : reject(new Error('API absente')));
+    s.onerror = () => { s.remove(); reject(new Error('Échec du chargement : ' + src)); };
+    document.head.appendChild(s);
+  });
+}
+
+async function loadGristApi() {
+  const origins = [];
+  try { if (document.referrer) origins.push(new URL(document.referrer).origin); } catch (e) { /* referrer invalide */ }
+  try { if (location.ancestorOrigins && location.ancestorOrigins[0]) origins.push(location.ancestorOrigins[0]); } catch (e) { /* non disponible */ }
+  origins.push('https://grist.numerique.gouv.fr', 'https://docs.getgrist.com');
+  for (const o of [...new Set(origins)]) {
+    try { await loadScript(o + '/grist-plugin-api.js'); return true; } catch (e) { /* origine suivante */ }
+  }
+  return false;
+}
+
+async function main() {
+  if (window.self === window.top && !window.__GRIST_MOCK__) {
+    showMsg('Ce widget doit être ouvert dans Grist : vue « Personnalisé » → URL personnalisée.', true);
+    return;
+  }
+  if (!window.__GRIST_MOCK__ && !(await loadGristApi())) {
+    showMsg("Impossible de charger l'API Grist. Vérifie ta connexion puis recharge la page.", true);
+    return;
+  }
+  // Accès complet nécessaire pour lire les tables _grist_* ; le widget n'écrit jamais.
+  grist.ready({ requiredAccess: 'full', allowSelectBy: false });
+  showMsg('Widget prêt.');
+}
+
+main();
+</script>
+</body>
+</html>
