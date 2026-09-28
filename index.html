@@ -1233,7 +1233,223 @@ function fileBase() {
 // --- Onglet Schéma (Cytoscape.js) ---
 let cy = null;
 let graphDirty = true;
-function renderGraph() {}
+const graphSettings = Object.assign({ mode: 'tables', cols: 'all', layout: 'cose', focus: '' }, parseJSON(lsGet(LS.graph), {}) || {});
+const saveGraphSettings = () => lsSet(LS.graph, JSON.stringify(graphSettings));
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const GRAPH_LEGENDS = {
+  tables: 'Trait plein : Référence · tirets : Liste de références · pointillés : table résumée · ƒ formule · ↺ formule de déclenchement · (n) nombre de lignes. Survol ou clic : met en évidence les tables liées.',
+  pages: 'Cadres : pages · flèche orange : « sélectionner par » · pointillés : table affichée · bordure orange : widget personnalisé · bordure rouge : table affichée sur aucune page.',
+  deps: 'Flèche A → B : la formule de B utilise A · bordure verte : formule · orange : formule de déclenchement · grise : donnée saisie. Détection approximative, à partir du texte des formules.',
+};
+
+function schemaMsg(text) {
+  $('schema-msg').textContent = text || '';
+  $('schema-msg').hidden = !text;
+}
+
+// Taille d'une boîte d'après son texte (police à chasse fixe, 11 px).
+function withSize(data) {
+  const lines = String(data.label).split('\n');
+  return Object.assign(data, { w: Math.max(...lines.map(l => l.length)) * 6.7 + 24, h: lines.length * 14 + 16 });
+}
+
+function shortType(c) {
+  if (c.type.base === 'Ref') return '→ ' + c.type.target;
+  if (c.type.base === 'RefList') return '⇉ ' + c.type.target;
+  return TYPE_LABELS[c.type.base] || c.type.base;
+}
+
+function tableNodeLabel(t, colsMode) {
+  let cols = colsMode === 'none' ? [] : t.columns;
+  if (colsMode === 'refs') cols = cols.filter(c => c.type.target);
+  const head = t.tableId + (t.rowCount !== null ? '  (' + t.rowCount + ')' : '');
+  const lines = cols.map(c => (c.nature === 'formule' ? 'ƒ ' : c.nature === 'déclenchement' ? '↺ ' : '  ') + c.colId + ' : ' + shortType(c));
+  if (!lines.length) return head;
+  const width = Math.max(head.length, ...lines.map(l => l.length));
+  return [head, '─'.repeat(width), ...lines].join('\n');
+}
+
+function graphElements() {
+  const nodes = [], edges = [];
+  const focus = graphSettings.focus;
+
+  if (graphSettings.mode === 'tables') {
+    let keep = new Set(model.tables.map(t => t.tableId));
+    if (focus) {
+      keep = new Set([focus]);
+      for (const r of model.relations) {
+        if (r.from === focus) keep.add(r.to);
+        if (r.to === focus) keep.add(r.from);
+      }
+    }
+    for (const t of model.tables) {
+      if (!keep.has(t.tableId)) continue;
+      nodes.push({ data: withSize({ id: 't:' + t.tableId, label: tableNodeLabel(t, graphSettings.cols), kind: t.isSummary ? 'summary' : 'table' }) });
+    }
+    model.relations.forEach((r, i) => {
+      if (!keep.has(r.from) || !keep.has(r.to)) return;
+      edges.push({ data: { id: 'r' + i, source: 't:' + r.from, target: 't:' + r.to, label: r.kind === 'summary' ? 'résumé de' : r.col, kind: r.kind } });
+    });
+  }
+
+  if (graphSettings.mode === 'pages') {
+    const tablesShown = new Set();
+    for (const p of model.pages) {
+      if (focus && String(p.ref) !== focus) continue;
+      nodes.push({ data: withSize({ id: 'p:' + p.ref, label: p.name, kind: 'page' }) });
+      for (const s of p.sections) {
+        const label = s.title + '\n' + s.kindLabel + (s.custom ? '\naccès : ' + (s.custom.access || 'aucun') : '');
+        nodes.push({ data: withSize({ id: 's:' + s.ref, parent: 'p:' + p.ref, label, kind: s.custom ? 'custom' : 'widget' }) });
+        if (s.tableId) {
+          tablesShown.add(s.tableId);
+          edges.push({ data: { id: 'e:' + s.ref, source: 's:' + s.ref, target: 't:' + s.tableId, label: '', kind: 'shows' } });
+        }
+      }
+    }
+    const secIds = new Set(nodes.map(n => n.data.id));
+    for (const p of model.pages) for (const s of p.sections) {
+      if (s.link && secIds.has('s:' + s.ref) && secIds.has('s:' + s.link.srcRef)) {
+        edges.push({ data: { id: 'l:' + s.ref, source: 's:' + s.link.srcRef, target: 's:' + s.ref, label: s.link.targetCol ? 'via ' + s.link.targetCol : '', kind: 'link' } });
+      }
+    }
+    for (const t of model.tables) {
+      const orphan = !t.pages.length;
+      if (tablesShown.has(t.tableId) || (orphan && !focus)) {
+        nodes.push({ data: withSize({ id: 't:' + t.tableId, label: t.tableId, kind: orphan ? 'orphan' : 'table' }) });
+      }
+    }
+  }
+
+  if (graphSettings.mode === 'deps') {
+    const tableOf = id => id.split('.')[0];
+    let deps = formulaDeps(model).filter(d => tableOf(d.from) !== d.to.split('.')[0] || d.from.includes('.'));
+    if (focus) deps = deps.filter(d => tableOf(d.from) === focus || tableOf(d.to) === focus);
+    const colNodes = new Set(), tableNodes = new Set();
+    for (const d of deps) {
+      for (const id of [d.from, d.to]) {
+        tableNodes.add(tableOf(id));
+        if (id.includes('.')) colNodes.add(id);
+      }
+    }
+    for (const t of tableNodes) nodes.push({ data: withSize({ id: 't:' + t, label: t, kind: 'group' }) });
+    for (const id of colNodes) {
+      const [t, colId] = [tableOf(id), id.slice(id.indexOf('.') + 1)];
+      const col = model._tableById.get(t).columns.find(c => c.colId === colId);
+      const kind = col.nature === 'formule' ? 'formule' : col.nature === 'déclenchement' ? 'declenchement' : 'donnee';
+      nodes.push({ data: withSize({ id: 'c:' + id, parent: 't:' + t, label: colId, kind }) });
+    }
+    deps.forEach((d, i) => edges.push({ data: {
+      id: 'd' + i, source: (d.from.includes('.') ? 'c:' : 't:') + d.from, target: 'c:' + d.to,
+      label: d.from.includes('.') ? '' : 'recherche', kind: 'dep' } }));
+  }
+  return { nodes, edges };
+}
+
+function graphStyle() {
+  const c = { fg: cssVar('--fg'), bg: cssVar('--bg'), bg2: cssVar('--bg2'), muted: cssVar('--muted'), border: cssVar('--border'),
+    accent: cssVar('--accent'), warn: cssVar('--warn'), danger: cssVar('--danger') };
+  const mono = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  return [
+    { selector: 'node', style: {
+      label: 'data(label)', 'font-family': mono, 'font-size': 11, color: c.fg, 'text-wrap': 'wrap',
+      'text-valign': 'center', 'text-halign': 'center', 'text-justification': 'left',
+      shape: 'round-rectangle', width: 'data(w)', height: 'data(h)',
+      'background-color': c.bg2, 'border-width': 1, 'border-color': c.border } },
+    { selector: ':parent', style: {
+      'text-valign': 'top', 'text-halign': 'center', 'font-weight': 'bold', 'font-size': 12,
+      'background-color': c.bg2, 'background-opacity': 0.4, 'border-color': c.muted, padding: 16 } },
+    { selector: 'node[kind="table"]', style: { 'border-color': c.accent, 'border-width': 2 } },
+    { selector: 'node[kind="summary"]', style: { 'border-color': c.muted, 'border-width': 2, 'border-style': 'dashed' } },
+    { selector: 'node[kind="orphan"]', style: { 'border-color': c.danger, 'border-width': 2, 'border-style': 'dashed' } },
+    { selector: 'node[kind="custom"]', style: { 'border-color': c.warn, 'border-width': 2 } },
+    { selector: 'node[kind="formule"]', style: { 'border-color': c.accent, 'border-width': 2 } },
+    { selector: 'node[kind="declenchement"]', style: { 'border-color': c.warn, 'border-width': 2 } },
+    { selector: 'node[kind="donnee"]', style: { 'border-color': c.muted } },
+    { selector: 'edge', style: {
+      width: 1.5, 'curve-style': 'bezier', 'line-color': c.muted, 'target-arrow-color': c.muted, 'target-arrow-shape': 'triangle',
+      label: 'data(label)', 'font-size': 10, color: c.muted, 'text-rotation': 'autorotate',
+      'text-background-color': c.bg, 'text-background-opacity': 1, 'text-background-padding': 2 } },
+    { selector: 'edge[kind="Ref"]', style: { 'line-color': c.accent, 'target-arrow-color': c.accent } },
+    { selector: 'edge[kind="RefList"]', style: { 'line-color': c.accent, 'target-arrow-color': c.accent, 'line-style': 'dashed', 'target-arrow-shape': 'vee' } },
+    { selector: 'edge[kind="summary"]', style: { 'line-style': 'dotted' } },
+    { selector: 'edge[kind="shows"]', style: { 'line-style': 'dotted', width: 1 } },
+    { selector: 'edge[kind="link"]', style: { 'line-color': c.warn, 'target-arrow-color': c.warn, width: 2, color: c.warn } },
+    { selector: '.faded', style: { opacity: 0.15 } },
+    { selector: 'node:selected', style: { 'border-width': 3, 'border-color': c.accent } },
+  ];
+}
+
+function runLayout() {
+  if (!cy) return;
+  const common = { padding: 30, animate: false, fit: true };
+  const opts = {
+    cose: { name: 'cose', nodeDimensionsIncludeLabels: true, idealEdgeLength: () => 120, nodeRepulsion: () => 400000,
+      nodeOverlap: 20, gravity: 0.25, numIter: 2500, componentSpacing: 80, randomize: true },
+    breadthfirst: { name: 'breadthfirst', directed: true, spacingFactor: 1.2, avoidOverlap: true },
+    grid: { name: 'grid', avoidOverlap: true, avoidOverlapPadding: 20 },
+    circle: { name: 'circle', avoidOverlap: true },
+    concentric: { name: 'concentric', avoidOverlap: true, minNodeSpacing: 20 },
+  }[graphSettings.layout] || { name: 'cose' };
+  cy.layout(Object.assign({}, common, opts)).run();
+}
+
+// Met en évidence un élément et ses voisins.
+function highlight(node) {
+  cy.elements().removeClass('faded');
+  if (!node) return;
+  let keep = node.union(node.descendants());
+  keep = keep.union(keep.closedNeighborhood());
+  keep = keep.union(keep.ancestors()).union(keep.filter('node').ancestors());
+  cy.elements().not(keep).addClass('faded');
+}
+
+function syncGraphControls() {
+  $('graph-mode').value = graphSettings.mode;
+  $('graph-cols').value = graphSettings.cols;
+  $('graph-layout').value = graphSettings.layout;
+  $('graph-cols').hidden = graphSettings.mode !== 'tables';
+  const opts = graphSettings.mode === 'pages'
+    ? [['', 'Toutes les pages'], ...model.pages.map(p => [String(p.ref), p.name])]
+    : [['', 'Toutes les tables'], ...model.tables.map(t => [t.tableId, t.tableId])];
+  if (!opts.some(o => o[0] === graphSettings.focus)) graphSettings.focus = '';
+  $('graph-focus').innerHTML = opts.map(([v, l]) => '<option value="' + esc(v) + '">' + esc(l) + '</option>').join('');
+  $('graph-focus').value = graphSettings.focus;
+  $('legend').textContent = GRAPH_LEGENDS[graphSettings.mode];
+}
+
+function renderGraph() {
+  if (!model) return;
+  if (typeof cytoscape === 'undefined') {
+    schemaMsg('La bibliothèque de dessin (Cytoscape.js) n\'a pas pu être chargée depuis cdn.jsdelivr.net : vérifie ta connexion, puis recharge la page.');
+    return;
+  }
+  syncGraphControls();
+  if (!graphDirty && cy) { cy.resize(); return; }
+  graphDirty = false;
+  if (cy) { cy.destroy(); cy = null; }
+  const els = graphElements();
+  if (!els.nodes.length) {
+    schemaMsg(graphSettings.mode === 'deps' ? 'Aucune formule ne dépend d\'une autre colonne.' : 'Rien à afficher.');
+    return;
+  }
+  schemaMsg('');
+  cy = cytoscape({ container: $('cy'), elements: els, style: graphStyle(), minZoom: 0.05, maxZoom: 4 });
+  runLayout();
+  let pinned = null;
+  cy.on('mouseover', 'node', e => { if (!pinned) highlight(e.target); });
+  cy.on('mouseout', 'node', () => { if (!pinned) highlight(null); });
+  cy.on('tap', e => {
+    pinned = e.target === cy ? null : (e.target.isNode() ? e.target : null);
+    highlight(pinned);
+  });
+}
+
+function rebuildGraph() {
+  saveGraphSettings();
+  graphDirty = true;
+  renderGraph();
+}
 
 // --- Événements ---
 document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
@@ -1250,6 +1466,34 @@ $('copy-prompt').addEventListener('click', async () => {
   else { $('prompt').select(); toast('Copie automatique refusée : le texte est sélectionné, fais Ctrl/Cmd + C.', true); }
 });
 $('dl-prompt').addEventListener('click', () => { renderPrompt(); download(fileBase() + '-prompt.md', $('prompt').value, 'text/markdown;charset=utf-8'); });
+
+$('graph-mode').addEventListener('change', e => { graphSettings.mode = e.target.value; graphSettings.focus = ''; rebuildGraph(); });
+$('graph-focus').addEventListener('change', e => { graphSettings.focus = e.target.value; rebuildGraph(); });
+$('graph-cols').addEventListener('change', e => { graphSettings.cols = e.target.value; rebuildGraph(); });
+$('graph-layout').addEventListener('change', e => { graphSettings.layout = e.target.value; saveGraphSettings(); runLayout(); });
+$('graph-fit').addEventListener('click', () => { if (cy) cy.fit(undefined, 30); });
+$('export-png').addEventListener('click', () => {
+  if (!cy) return toast('Aucun schéma à exporter.', true);
+  download(fileBase() + '-schema.png', cy.png({ output: 'blob', full: true, scale: 2, bg: cssVar('--bg') }));
+});
+$('export-svg').addEventListener('click', () => {
+  if (!cy) return toast('Aucun schéma à exporter.', true);
+  if (typeof cy.svg !== 'function') return toast('Export SVG indisponible (extension cytoscape-svg non chargée).', true);
+  download(fileBase() + '-schema.svg', cy.svg({ full: true, scale: 1, bg: cssVar('--bg') }), 'image/svg+xml;charset=utf-8');
+});
+$('export-mermaid').addEventListener('click', async () => {
+  if (!model) return;
+  if (await copyText(buildMermaid(model))) toast('Schéma Mermaid copié (à coller par exemple dans mermaid.live).');
+  else toast('Copie refusée par le navigateur.', true);
+});
+$('export-json').addEventListener('click', () => {
+  if (!model) return;
+  download(fileBase() + '-structure.json', JSON.stringify(model, (k, v) => (k === '_tableById' ? undefined : v), 2), 'application/json;charset=utf-8');
+});
+// Changement de thème clair / sombre : redessiner avec les nouvelles couleurs.
+try {
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { graphDirty = true; if (currentTab === 'schema') renderGraph(); });
+} catch (e) { /* navigateur ancien */ }
 
 async function main() {
   if (window.self === window.top && !window.__GRIST_MOCK__) {
