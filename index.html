@@ -7,12 +7,12 @@
 <style>
   :root {
     --bg: #ffffff; --bg2: #f5f6f7; --fg: #262633; --muted: #6b6b7b; --border: #d9d9e0;
-    --accent: #16b378; --accent-fg: #ffffff; --danger: #d0342c;
+    --accent: #16b378; --accent-fg: #ffffff; --danger: #d0342c; --warn: #d9822b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #1f1f26; --bg2: #2a2a33; --fg: #e8e8ee; --muted: #a0a0b0; --border: #3d3d4a;
-      --accent: #1dcb89; --accent-fg: #10231b; --danger: #ff6b61;
+      --accent: #1dcb89; --accent-fg: #10231b; --danger: #ff6b61; --warn: #f0a050;
     }
   }
   * { box-sizing: border-box; }
@@ -20,39 +20,998 @@
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-size: 14px; background: var(--bg); color: var(--fg);
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; overflow: hidden;
   }
+  code, pre, textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
   header {
     display: flex; align-items: center; gap: 8px; padding: 8px 12px;
     border-bottom: 1px solid var(--border);
   }
   header h1 { font-size: 16px; margin: 0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  button {
+  nav { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  nav button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 8px 10px; color: var(--muted); }
+  nav button.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+  button, select {
     font: inherit; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px;
     background: var(--bg2); color: var(--fg); cursor: pointer;
   }
-  button:hover { border-color: var(--accent); }
+  button:hover, select:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  main { flex: 1; min-height: 0; position: relative; }
+  .tab { position: absolute; inset: 0; overflow: auto; padding: 12px; }
+  .tab[hidden] { display: none; }
   #msg { padding: 12px; color: var(--muted); }
   #msg.error { color: var(--danger); }
+  #msg[hidden] { display: none; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+
+  /* Structure */
+  .cards { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .card { background: var(--bg2); border-radius: 6px; padding: 6px 10px; min-width: 90px; }
+  .card b { display: block; font-size: 18px; }
+  h2 { font-size: 15px; margin: 18px 0 8px; }
+  details { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; }
+  details > summary { cursor: pointer; padding: 6px 10px; }
+  details > .inner { padding: 0 10px 10px; overflow-x: auto; }
+  table.grid { border-collapse: collapse; width: 100%; font-size: 12px; }
+  table.grid th, table.grid td { border-bottom: 1px solid var(--border); padding: 3px 6px; text-align: left; vertical-align: top; }
+  table.grid th { color: var(--muted); font-weight: 600; }
+  .badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--bg2); border: 1px solid var(--border); }
+  .badge.formule { border-color: var(--accent); }
+  .badge.declenchement { border-color: var(--warn); }
+  .badge.vide { border-color: var(--danger); }
+  pre.formula { margin: 4px 0; padding: 4px 6px; background: var(--bg2); border-radius: 4px; white-space: pre-wrap; word-break: break-word; }
+  ul.tree { margin: 4px 0; padding-left: 18px; }
+
+  /* Prompt */
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  textarea { width: 100%; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px; }
+  #context { min-height: 70px; resize: vertical; }
+  #prompt { min-height: 300px; height: calc(100% - 190px); resize: vertical; }
+
+  /* Schéma */
+  #tab-schema { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+  #tab-schema[hidden] { display: none; }
+  #schema-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  #cy { flex: 1; min-height: 0; background: var(--bg); }
+  #schema-msg { padding: 12px; }
+  #schema-msg[hidden] { display: none; }
+  #legend { padding: 4px 12px; border-top: 1px solid var(--border); }
+
+  #toast {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    background: var(--fg); color: var(--bg); padding: 6px 12px; border-radius: 4px;
+    font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90%;
+  }
+  #toast.show { opacity: .95; }
+  #toast.error { background: var(--danger); color: #fff; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.34.3/dist/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-svg@0.4.0/cytoscape-svg.js"></script>
 </head>
 <body>
 <header>
   <h1 id="title">Checkup du projet</h1>
   <button id="refresh" title="Relire la structure du document">↻</button>
 </header>
+<nav id="tabs">
+  <button data-tab="structure" class="active">Structure</button>
+  <button data-tab="prompt">Prompt</button>
+  <button data-tab="schema">Schéma</button>
+</nav>
 <div id="msg">Chargement…</div>
+<main id="main" hidden>
+  <section class="tab" id="tab-structure"></section>
+
+  <section class="tab" id="tab-prompt" hidden>
+    <label for="context"><b>But du projet, utilisateurs</b> <span class="muted small">(facultatif, ajouté au prompt, mémorisé sur cet ordinateur)</span></label>
+    <textarea id="context" placeholder="Ex. : suivi des stages des élèves de BTS ; saisi par 3 professeurs, consulté par la direction ; document partagé avec 10 personnes."></textarea>
+    <div class="row">
+      <button id="copy-prompt" class="primary">Copier le prompt</button>
+      <button id="dl-prompt">Télécharger (.md)</button>
+      <span id="prompt-size" class="muted small"></span>
+    </div>
+    <textarea id="prompt" class="mono" readonly></textarea>
+  </section>
+
+  <section class="tab" id="tab-schema" hidden>
+    <div id="schema-bar">
+      <select id="graph-mode" title="Vue">
+        <option value="tables">Tables et relations</option>
+        <option value="pages">Pages et widgets</option>
+        <option value="deps">Dépendances des formules</option>
+      </select>
+      <select id="graph-focus" title="Restreindre à…"></select>
+      <select id="graph-cols" title="Colonnes affichées">
+        <option value="all">Toutes les colonnes</option>
+        <option value="refs">Références seulement</option>
+        <option value="none">Noms des tables seulement</option>
+      </select>
+      <select id="graph-layout" title="Disposition">
+        <option value="cose">Disposition automatique</option>
+        <option value="breadthfirst">Hiérarchique</option>
+        <option value="grid">Grille</option>
+        <option value="circle">Cercle</option>
+        <option value="concentric">Concentrique</option>
+      </select>
+      <button id="graph-fit" title="Tout afficher">⤢</button>
+      <button id="export-png">PNG</button>
+      <button id="export-svg">SVG</button>
+      <button id="export-mermaid" title="Copier le schéma des tables au format Mermaid">Mermaid</button>
+      <button id="export-json" title="Télécharger la structure complète en JSON">JSON</button>
+    </div>
+    <div id="schema-msg" class="muted" hidden></div>
+    <div id="cy"></div>
+    <div id="legend" class="muted small"></div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<!-- Référentiel des bonnes pratiques : copie de BONNES-PRATIQUES.md (à recopier à chaque modification). -->
+<script type="text/markdown" id="referentiel">
+# Bonnes pratiques — bases de données relationnelles et Grist
+
+> Référentiel utilisé par `grist-checkup-widget` pour évaluer un document Grist.
+> Chaque règle a un **identifiant** (`R…` = relationnel général, `G…` = spécifique Grist), une **gravité**
+> et, quand c'est possible, un **indice de détection** à partir des seules métadonnées collectées
+> par le widget (structure, types, formules, taux de remplissage — jamais les valeurs des cellules).
+
+## Échelle de gravité
+
+| Gravité | Sens | Exemples |
+|---|---|---|
+| 🔴 **Critique** | Risque de perte, de fuite ou de corruption de données | données personnelles exposées, pas de règles d'accès sur un document partagé |
+| 🟠 **Majeur** | Erreurs probables, incohérences, maintenance difficile | liens entre tables en texte libre, même information saisie à deux endroits |
+| 🟡 **Mineur** | Lisibilité, confort, performance modérée | noms par défaut (`Table1`, `A`, `B`), colonnes sans description |
+| 🔵 **Suggestion** | Amélioration facultative | ajouter une vue fiche, un format conditionnel |
+
+---
+
+# Partie A — Principes des bases relationnelles
+
+## A.1 Modélisation
+
+### R1 — Une table = un type d'objet 🟠
+Chaque table décrit **une seule sorte de chose** (Élèves, Classes, Évaluations…) ; chaque ligne = un exemplaire.
+Nom de table au **pluriel**, nom de colonne au **singulier**.
+- ❌ Une table `Suivi` qui mélange élèves, notes et rendez-vous.
+- *Détection* : table avec beaucoup de colonnes (> 30) dont beaucoup sont peu remplies ; préfixes de colonnes par thème (`Eleve_…`, `Classe_…`).
+
+### R2 — Une information à un seul endroit (pas de redondance) 🟠
+Une donnée saisie deux fois finit toujours par diverger. On la stocke une fois et on la **retrouve** par une référence ou une formule.
+- ❌ Le nom de la classe recopié dans chaque ligne d'élève **et** dans la table `Classes`.
+- ✅ Une colonne Référence `Classe` → `Classes`, et `$Classe.Nom` si on a besoin du nom.
+- *Détection* : colonnes de données (non formules) portant le même nom qu'une colonne d'une autre table ; colonne Texte dont l'id correspond au nom d'une table (`Classe`, `Etablissement`).
+
+### R3 — Valeurs atomiques (1re forme normale) 🟠
+Une cellule = **une** valeur. Pas de listes séparées par des virgules, pas de « Nom Prénom » dans une seule colonne si on doit trier par nom.
+- ❌ `Eleves = "Alice, Bob, Chloé"` (Texte).
+- ✅ Liste de références (ou table de liaison, voir R6).
+- *Détection* : colonne Texte au nom pluriel (`Eleves`, `Tags`, `Competences`) ; colonne `Adresse` unique pour une donnée exploitée par ville/code postal.
+
+### R4 — Pas de groupes répétés 🟠
+Des colonnes numérotées signalent une table manquante.
+- ❌ `Tel1`, `Tel2`, `Tel3` ; `Note_T1`, `Note_T2`, `Note_T3` ; `Janvier`…`Decembre`.
+- ✅ Une table `Telephones` (ou `Notes`) avec une ligne par valeur et une référence vers le parent.
+- *Détection* : ids de colonnes qui ne diffèrent que par un numéro ou un suffixe de période.
+
+### R5 — Dépendances correctes (2e et 3e formes normales) 🟡
+Chaque colonne dépend de **toute** la clé de la ligne, et **seulement** d'elle. Si une colonne décrit un autre objet (ex. `VilleEtablissement` dans `Eleves`), elle appartient à la table de cet objet.
+- *Détection* : colonnes de données dont l'id commence par le nom d'une autre table référencée (`Etablissement_Ville` alors qu'une référence `Etablissement` existe).
+
+### R6 — Relations plusieurs-à-plusieurs explicites 🟡
+Pour relier N objets à N objets :
+- **simple** : une colonne *Liste de références* suffit ;
+- **avec attributs** (date, rôle, note, quantité…) : une **table de liaison** (`Inscriptions` : Eleve → Eleves, Option → Options, Date).
+- *Détection* : table avec ≥ 2 colonnes Référence et peu d'autres colonnes (table de liaison déjà présente, OK) ; Liste de références accompagnée de colonnes Texte parallèles (« rôles » séparés par des virgules) → table de liaison manquante.
+
+### R7 — Tables de référence plutôt que texte libre 🟠
+Toute valeur qui revient souvent et qui a ses propres attributs (établissement, niveau, compétence) mérite une table. Les petites listes fermées et stables (statut, oui/non/peut-être) peuvent rester en Choix.
+- Règle pratique : **> ~20 valeurs possibles, ou valeurs ayant des attributs, ou liste qui évolue souvent → table** ; sinon Choix.
+- *Détection* : colonne Choix/Liste de choix avec beaucoup d'options ; colonne Texte au nom d'objet métier.
+
+### R8 — Pas de données dérivées stockées en dur 🟠
+Totaux, âges, moyennes, nombres d'éléments : **calculés**, pas saisis. Exception : une valeur figée volontairement (prix au moment de la commande, date de création) — alors documentée comme telle.
+- *Détection* : colonnes de données nommées `Total`, `Nb…`, `Nombre…`, `Moyenne`, `Age`, `Somme`.
+
+### R9 — Éviter le modèle « entité-attribut-valeur » 🟡
+Une table générique `Attribut | Valeur` pour tout stocker empêche le typage, la validation et les références. À réserver à des besoins réellement ouverts.
+- *Détection* : table avec des colonnes du type `Cle`/`Champ`/`Attribut` + `Valeur` en Texte.
+
+## A.2 Identifiants et intégrité
+
+### R10 — Chaque ligne a un identifiant stable 🟡
+Utiliser un identifiant technique (en Grist : `id`, automatique). Ne pas utiliser comme clé une donnée qui peut changer (nom, e-mail). Si un identifiant métier existe (UAI d'un établissement, code de compétence), il doit être **unique** et vérifié.
+- *Détection* : colonne `Code`/`UAI`/`Ref` sans formule de contrôle d'unicité ni format conditionnel.
+
+### R11 — Intégrité référentielle 🔴/🟠
+Un lien doit pointer vers une ligne qui existe. Pas de liens « par le texte » (un nom recopié), pas de lignes orphelines.
+- ✅ Colonnes Référence plutôt que Texte ; contrôle des références vides quand elles sont obligatoires.
+- *Détection* : colonne Référence avec un taux de remplissage bas alors qu'elle est structurante ; colonne Texte faisant office de lien (R2).
+
+### R12 — Contraintes et validation 🟡
+Rendre les erreurs visibles : obligatoire (non vide), unicité, bornes (note entre 0 et 20), format (e-mail, code postal), cohérence (date de fin ≥ date de début).
+- En Grist : règles d'accès de type condition sur `newRec` pour **bloquer**, ou formats conditionnels / colonne formule « Alerte » pour **signaler**.
+
+### R13 — Types adaptés 🟠
+Date dans un type Date, nombre dans Numérique/Entier, booléen dans Interrupteur. Jamais une date ou un montant en Texte (tri et calculs faux).
+- *Détection* : colonne Texte nommée `Date…`, `Montant`, `Prix`, `Nb…`, `Note`, `Age`, `Actif`, `Est…` ; colonne de type `Any`.
+
+### R14 — Valeur vide = sens unique 🟡
+Distinguer « inconnu », « non applicable », « zéro ». Ne pas utiliser `0`, `-`, `NA`, `?` comme valeurs spéciales dans une colonne numérique ou de date.
+
+## A.3 Nommage et documentation
+
+### R15 — Noms explicites et cohérents 🟡
+Un vocabulaire métier unique (pas `Eleve` ici et `Apprenant` là), une convention constante (PascalCase ou Snake_case), pas d'abréviations obscures. Identifiants sans accent ni espace (voir G2).
+
+### R16 — Documenter le modèle 🟡
+Décrire le rôle de chaque table, des colonnes non évidentes, des formules complexes et des conventions (unités, fuseau horaire, valeurs de statut). En Grist : champ **Description** des colonnes, page « Lisez-moi » (widget Markdown/Texte).
+- *Détection* : proportion de colonnes sans description ; absence de page d'aide.
+
+## A.4 Sécurité, confidentialité, pérennité
+
+### R17 — Moindre privilège 🔴
+Chacun ne voit et ne modifie que ce dont il a besoin. Distinguer lecteurs, éditeurs, propriétaires ; restreindre les colonnes et lignes sensibles.
+
+### R18 — Minimisation des données personnelles (RGPD) 🔴
+Ne collecter que le nécessaire, pour une finalité définie, avec une durée de conservation. Données sensibles (santé, situation familiale, handicap, notes nominatives d'élèves) : accès restreint, voire à exclure. Prévoir la suppression ou l'anonymisation en fin d'usage.
+- *Détection* : colonnes nommées `Telephone`, `Email`, `Adresse`, `DateNaissance`, `Sante`, `Handicap`, `PAP`, `PAI`, `NIR`… sans règle d'accès sur la table ou la colonne.
+
+### R19 — Historique et suppression 🟡
+Si on doit savoir **qui a changé quoi et quand**, le prévoir (colonnes de création/modification, statut « archivé » plutôt que suppression). Les suppressions en cascade doivent être volontaires.
+
+### R20 — Sauvegardes et environnements 🟡
+Tester les changements de structure sur une copie ; garder des sauvegardes/exports réguliers pour les données importantes.
+
+---
+
+# Partie B — Bonnes pratiques Grist
+
+## B.1 Structure du document
+
+### G1 — Noms par défaut remplacés 🟡
+Pas de `Table1`, colonnes `A`, `B`, `C`, pages « Page 1 », widgets « TABLE1 » au bout du compte.
+- *Détection* : tables `Table\d+`, colonnes d'id `[A-Z]` ou `[A-Z]\d*`, pages et vues aux noms par défaut.
+
+### G2 — Identifiant (id) ≠ libellé : soigner les deux 🟡
+Le **libellé** est affiché (accents, espaces permis) ; l'**id** sert dans les formules, l'API et les widgets (`$Date_debut`). Garder des ids courts, sans accent, stables : les renommer casse les widgets personnalisés, les intégrations et les webhooks (les formules, elles, sont mises à jour automatiquement).
+- Décocher « lier l'id au libellé » une fois le document utilisé par des outils externes.
+- *Détection* : ids longs ou générés depuis un libellé à rallonge ; ids incohérents entre tables pour une même notion.
+
+### G3 — Utiliser les colonnes Référence et Liste de références 🟠
+C'est l'équivalent Grist des clés étrangères (R2, R11). Choisir une **colonne d'affichage** parlante (Nom, Code) plutôt que `id` (qui affiche un numéro de ligne). Envisager les **références bidirectionnelles** pour naviguer dans les deux sens sans formule.
+- *Détection* : Référence dont la colonne d'affichage est `id` ou vide (à indiquer comme « affiche des numéros ») ; Texte au nom d'une table (R2).
+
+### G4 — Choix vs Référence 🟡
+Choix / Liste de choix : petites listes stables, sans attribut, gérées par le propriétaire du document. Référence : liste longue, évolutive, gérée par les utilisateurs, ou valeurs ayant des propriétés (couleur, ordre, responsable…). Voir R7.
+- *Détection* : Choix avec > 20 options ; mêmes options répétées dans plusieurs colonnes/tables (→ table de référence commune).
+
+### G5 — Types de colonnes corrects 🟠
+Pas de colonne en type **Any** (souvent une colonne jamais typée ou une formule mal typée) ; pas de nombres, dates, booléens en Texte (R13). Pour les dates : Date si l'heure est inutile, DateHeure avec **fuseau horaire explicite** sinon. Pour les fichiers : type Pièces jointes (en gardant un œil sur le poids du document).
+- *Détection* : type `Any` ; types Texte suspects d'après le nom.
+
+### G6 — Colonnes de données vs colonnes formules 🟠
+- **Formule** (colonne calculée) : toute valeur dérivée (R8). Elle se recalcule toujours ; on ne peut pas la saisir.
+- **Donnée** : ce que l'utilisateur saisit.
+- **Donnée avec formule de déclenchement** : valeur **calculée une fois** (à la création, ou quand certaines colonnes changent), puis modifiable. Idéal pour : date de création, auteur (`user.Name`), valeur par défaut, prix figé au moment de la commande, horodatage de modification.
+- ❌ Une formule `NOW()` pour « date de création » : elle change à chaque recalcul. ✅ Formule de déclenchement `NOW()` « à la création ».
+- ❌ Une formule convertie en données puis oubliée (copie figée devenue fausse).
+- *Détection* : colonnes formules contenant `NOW()`, `TODAY()` ou `user` (volatiles ou dépendantes de l'utilisateur) ; colonnes de données aux noms de valeurs dérivées (R8).
+
+### G7 — Tables de synthèse (résumés) avec parcimonie 🔵
+Les tables résumées sont pratiques pour les totaux par groupe, mais se multiplient vite. Pour un simple total par parent, préférer une colonne formule dans la table parente : `len($Eleves)` ou `SUM(Notes.lookupRecords(Eleve=$id).Valeur)`.
+- *Détection* : nombre élevé de tables résumées, notamment plusieurs regroupements quasi identiques ; tables résumées non affichées sur une page.
+
+### G8 — Supprimer ce qui ne sert plus 🟡
+Colonnes vides, colonnes d'essai, tables abandonnées, pages orphelines alourdissent et embrouillent.
+- *Détection* : colonne à 0 % de remplissage (hors formules) ; table à 0 ligne non référencée ; table non affichée sur aucune page ; colonnes nommées `test`, `temp`, `old`, `copie`, `ancien`.
+
+### G9 — Colonnes masquées maîtrisées 🟡
+Masquer une colonne dans une vue ne la protège **pas** : elle reste visible dans les données brutes, l'export et l'API. Pour cacher réellement, utiliser les règles d'accès (G15).
+
+## B.2 Formules (Python)
+
+### G10 — Formules lisibles 🟡
+Formules courtes ; sur plusieurs lignes avec variables intermédiaires et `return` quand c'est long ; commentaires `#` si la logique n'est pas évidente. Au-delà de ~15 lignes ou si la même logique est répétée : colonnes intermédiaires.
+
+### G11 — Recherches efficaces 🟠
+- ✅ `Table.lookupOne(Col=valeur)` / `Table.lookupRecords(Col=valeur)` : indexés, rapides.
+- ✅ Parcourir une référence : `$Classe.Etablissement.Nom`.
+- ❌ `Table.all` filtré en Python **dans chaque ligne** (`[r for r in Notes.all if r.Eleve == rec]`) : coût quadratique, document lent.
+- ❌ Recherche par un texte (`lookupOne(Nom=$NomClasse)`) quand une Référence est possible (G3).
+- *Détection* : formules contenant `.all` (surtout dans une table volumineuse) ; `lookupOne`/`lookupRecords` sur une colonne Texte de nom.
+
+### G12 — Formules robustes 🟡
+Prévoir les cas vides : référence vide (`$Classe` falsy), liste vide (`len(...) == 0` avant une moyenne), division par zéro, dates manquantes. Éviter `try/except` qui masque toutes les erreurs.
+- *Détection* : divisions sans test ; `except:` nu ; colonnes formule dont le résultat est souvent une erreur (si le taux d'erreur est collecté).
+
+### G13 — Pas de dépendances circulaires ni de chaînes inutiles 🟡
+Deux formules qui se lisent mutuellement provoquent des erreurs ; de longues chaînes de colonnes formules intermédiaires ralentissent chaque modification. Le graphe des dépendances (vue du widget) aide à les repérer.
+
+### G14 — Formules volatiles à éviter 🟡
+`NOW()`, `TODAY()`, `random()` dans une colonne formule rendent le document instable (recalculs, valeurs qui changent à l'ouverture). Les réserver aux formules de déclenchement (G6) ou aux affichages qui doivent vraiment être « en direct » (ex. « en retard ? »), en le documentant.
+
+## B.3 Accès, partage et confidentialité
+
+### G15 — Règles d'accès sur tout document partagé 🔴
+Dès que le document est partagé au-delà de son propriétaire :
+- définir des règles au **niveau document** (par défaut), puis **table**, puis **colonne** ;
+- restreindre les données personnelles et sensibles (R18) ;
+- utiliser `user.Access`, `user.Email`, les **attributs utilisateur** (table de correspondance e-mail → rôle/établissement) pour filtrer les lignes ;
+- protéger la **structure** (seuls les propriétaires modifient tables, colonnes, formules) ;
+- **tester** avec « Voir en tant que… » pour chaque profil.
+- *Détection* : aucune règle d'accès ; règles uniquement au niveau document ; tables avec colonnes à caractère personnel sans règle ; règle qui accorde tout à tous.
+
+### G16 — Validation par règles d'accès 🟡
+Pour **empêcher** une saisie invalide (et pas seulement la signaler) : règle de condition sur `newRec` (ex. `newRec.Note < 0 or newRec.Note > 20` → refuser la mise à jour). Complément des formats conditionnels (R12).
+
+### G17 — Widgets personnalisés : niveau d'accès minimal 🟠
+Accorder à un widget personnalisé le niveau le plus faible qui fonctionne (`aucun` < `lecture de la table` < `accès complet`). Un widget en **accès complet** peut lire et modifier **tout** le document : ne le donner qu'aux widgets de confiance, dont on connaît l'origine (URL, dépôt).
+- *Détection* : widgets personnalisés en accès complet ; URL de widget hors domaines connus (grist, vercel du propriétaire, getgrist).
+
+### G18 — Webhooks et intégrations maîtrisés 🟠
+Chaque webhook doit avoir une destination connue et de confiance, un filtre (colonne « prêt à envoyer ») si pertinent, et ne pas exporter de données personnelles inutiles. Les webhooks inutilisés sont supprimés.
+- *Détection* : webhooks présents (à lister et justifier) ; webhooks sans colonne de déclenchement.
+
+### G19 — Partage public et liens 🔴
+Pas de lien public en édition sur un document contenant des données personnelles. Vérifier le partage « Toute personne ayant le lien ».
+
+## B.4 Pages, vues et ergonomie
+
+### G20 — Pages organisées par usage 🔵
+Une page = une tâche (Saisie, Suivi, Tableau de bord, Paramètres). Regrouper les pages en sous-pages ; garder les tables techniques ou de paramétrage à part.
+- *Détection* : nombre de pages très élevé ; pages à un seul widget grille brute de chaque table (document « tableur » non conçu).
+
+### G21 — Liaisons entre widgets (« Sélectionner par ») 🔵
+Exploiter le modèle maître-détail : liste des classes → élèves de la classe → fiche de l'élève. C'est ce qui rend les références utiles au quotidien.
+- *Détection* : références présentes mais aucune liaison « sélectionner par » sur les pages.
+
+### G22 — Fiches et formulaires pour la saisie 🔵
+Vue **Fiche** pour consulter/éditer une ligne riche ; vue **Formulaire** pour une collecte externe (champs obligatoires, textes d'aide). Grille pour les opérations en masse.
+
+### G23 — Formats conditionnels utiles et sobres 🔵
+Signaler anomalies, retards, doublons, champs manquants (R12) ; pas de couleur décorative sans signification. Pas trop de règles par colonne.
+- *Détection* : grand nombre de règles de formatage ; aucune règle alors que des contrôles sont attendus.
+
+### G24 — Tris et filtres enregistrés 🔵
+Enregistrer le tri et les filtres pertinents dans chaque vue (plutôt que de les refaire à chaque ouverture) ; nommer la vue en conséquence (« Élèves – absences non justifiées »).
+
+## B.5 Performance et volumétrie
+
+### G25 — Rester dans les limites 🟡
+Un document Grist est chargé en mémoire : au-delà de quelques centaines de milliers de lignes ou de pièces jointes volumineuses, il ralentit. Archiver les anciennes données dans un autre document, éviter les formules coûteuses (G11), limiter les tables résumées (G7).
+- *Détection* : tables > 100 000 lignes ; nombreuses colonnes formules dans les plus grosses tables ; formules avec `.all`.
+
+## B.6 Cycle de vie
+
+### G26 — Modifier la structure sans risque 🟡
+Tester sur une **copie** (« Travailler sur une copie ») ; consulter l'**historique des versions** / instantanés avant une opération lourde ; prévenir les utilisateurs avant de renommer des colonnes utilisées par des widgets ou intégrations (G2).
+
+### G27 — Documenter dans le document 🟡
+Page « Lisez-moi » (objectif, tables, conventions, contacts), descriptions de colonnes (R16), descriptions de widgets personnalisés (URL, rôle, niveau d'accès).
+
+---
+
+# Annexes
+
+## Anti-patterns fréquents et corrections
+
+| Symptôme | Règles | Correction pas à pas |
+|---|---|---|
+| Colonne Texte « Classe » remplie à la main dans `Eleves` | R2, R11, G3 | 1. Créer/compléter la table `Classes`. 2. Changer le type de la colonne en Référence → `Classes` (Grist fait la correspondance sur la colonne d'affichage). 3. Corriger les valeurs non reconnues (en rouge). 4. Choisir `Nom` comme colonne d'affichage. |
+| `Note_T1`, `Note_T2`, `Note_T3` | R4 | 1. Créer la table `Notes` (Eleve → Eleves, Trimestre, Valeur). 2. Y copier les valeurs. 3. Remplacer les anciennes colonnes par des formules `Notes.lookupOne(Eleve=$id, Trimestre=1).Valeur` le temps de la transition, puis les supprimer. |
+| Total saisi à la main | R8, G6 | Transformer la colonne en formule : `SUM($Lignes.Montant)` (référence inverse) ou `SUM(Lignes.lookupRecords(Commande=$id).Montant)`. |
+| « Date de création » en formule `NOW()` | G6, G14 | Convertir en colonne de données, formule de déclenchement `NOW()` appliquée « aux nouveaux enregistrements ». |
+| Choix de 60 établissements | R7, G4 | Créer une table `Etablissements` (Nom, UAI, Ville), puis convertir la colonne en Référence. |
+| Données personnelles visibles de tous | R17, R18, G15 | Règle d'accès sur la table/colonne : lecture réservée aux propriétaires ou aux lignes de l'utilisateur (`rec.Email == user.Email`) ; tester avec « Voir en tant que ». |
+| Formule `[r for r in X.all if …]` | G11 | Remplacer par `X.lookupRecords(Col=valeur)` ; si le critère est complexe, ajouter une colonne formule-clé dans `X` et chercher dessus. |
+| Colonnes `A`, `B`, `C`, table `Table1` | G1, G2 | Renommer libellés **et** ids avant de brancher des widgets ou intégrations. |
+
+## Checklist express
+
+**Modèle**
+- [ ] Chaque table = un seul type d'objet, noms explicites (R1, R15, G1)
+- [ ] Liens entre tables en Référence, colonne d'affichage lisible (R11, G3)
+- [ ] Aucune information saisie en double (R2)
+- [ ] Pas de listes dans une cellule texte ni de colonnes numérotées (R3, R4)
+- [ ] Valeurs calculées en formules ; valeurs figées en formules de déclenchement (R8, G6)
+- [ ] Types corrects, aucune colonne `Any` (R13, G5)
+
+**Formules**
+- [ ] `lookupRecords`/`lookupOne` plutôt que `.all` (G11)
+- [ ] Cas vides gérés, pas de volatiles inutiles (G12, G14)
+
+**Sécurité**
+- [ ] Règles d'accès en place et testées si le document est partagé (G15)
+- [ ] Données personnelles minimisées et protégées (R18)
+- [ ] Widgets personnalisés au niveau d'accès minimal, webhooks justifiés (G17, G18)
+
+**Usage**
+- [ ] Pages par tâche, liaisons maître-détail (G20, G21)
+- [ ] Colonnes et tables inutiles supprimées (G8)
+- [ ] Descriptions de colonnes et page « Lisez-moi » (R16, G27)
+
+## Proposition de note globale (sur 20)
+
+Partir de 20 et retirer, par règle non respectée (une fois par règle, pas par occurrence) :
+🔴 −4 · 🟠 −2 · 🟡 −0,5 · 🔵 0. Plancher à 0.
+Préciser toujours les points forts constatés, pas seulement les défauts.
+</script>
+
+<!-- Logique pure : sans DOM ni grist, testable avec Node. -->
+<script id="logic">
+"use strict";
+
+const HELPER_COL_RE = /^(gristHelper_|manualSort$)/;
+
+const TYPE_LABELS = {
+  Text: 'Texte', Numeric: 'Numérique', Int: 'Entier', Bool: 'Interrupteur', Date: 'Date',
+  DateTime: 'DateHeure', Choice: 'Choix', ChoiceList: 'Liste de choix', Ref: 'Référence',
+  RefList: 'Liste de références', Attachments: 'Pièces jointes', Any: 'Any (non typé)',
+  ManualSortPos: 'Position (tri manuel)', PositionNumber: 'Position',
+};
+
+const SECTION_KINDS = {
+  record: 'Grille', detail: 'Liste de fiches', single: 'Fiche', chart: 'Graphique',
+  custom: 'Personnalisé', form: 'Formulaire',
+};
+
+// fetchTable renvoie des colonnes ({id: [...], Col: [...]}) → tableau de lignes.
+function columnsToRows(data) {
+  if (!data || !data.id) return [];
+  const keys = Object.keys(data);
+  return data.id.map((_, i) => {
+    const r = {};
+    for (const k of keys) r[k] = data[k][i];
+    return r;
+  });
+}
+
+function parseJSON(s, fallback) {
+  if (s && typeof s === 'object') return s;
+  if (typeof s !== 'string' || !s.trim()) return fallback;
+  try { return JSON.parse(s); } catch (e) { return fallback; }
+}
+
+// Liste Grist ['L', a, b] (ou déjà un tableau, ou une chaîne JSON) → [a, b].
+function listValues(v) {
+  if (typeof v === 'string') v = parseJSON(v, null);
+  if (!Array.isArray(v)) return [];
+  return v[0] === 'L' ? v.slice(1) : v;
+}
+
+// Valeur par défaut de Grist (vide, 0, faux, référence ou liste vide) → considérée comme non remplie.
+function isEmptyValue(v) {
+  if (v === null || v === undefined || v === '' || v === 0 || v === false) return true;
+  if (Array.isArray(v)) return v.length === 0 || (v.length === 1 && v[0] === 'L');
+  return false;
+}
+
+function isErrorValue(v) {
+  return Array.isArray(v) && v[0] === 'E';
+}
+
+function typeInfo(type) {
+  const s = String(type || 'Any');
+  const i = s.indexOf(':');
+  const base = i < 0 ? s : s.slice(0, i);
+  const arg = i < 0 ? '' : s.slice(i + 1);
+  let label = TYPE_LABELS[base] || base;
+  if ((base === 'Ref' || base === 'RefList') && arg) label += ' → ' + arg;
+  if (base === 'DateTime' && arg) label += ' (' + arg + ')';
+  return { raw: s, base, target: (base === 'Ref' || base === 'RefList') ? arg : '', label };
+}
+
+function styleText(o) {
+  if (!o) return '';
+  const p = [];
+  if (o.fillColor) p.push('fond ' + o.fillColor);
+  if (o.textColor) p.push('texte ' + o.textColor);
+  if (o.fontBold) p.push('gras');
+  if (o.fontItalic) p.push('italique');
+  if (o.fontUnderline) p.push('souligné');
+  if (o.fontStrikethrough) p.push('barré');
+  return p.join(', ');
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '0 o';
+  const u = ['o', 'Ko', 'Mo', 'Go'];
+  let i = 0, n = bytes;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(1).replace('.', ',') : n) + ' ' + u[i];
+}
+
+// Statistiques d'une table à partir de ses données : on ne garde QUE des nombres, jamais les valeurs.
+function computeTableStats(data) {
+  const rows = data && data.id ? data.id.length : 0;
+  const cols = {};
+  for (const [colId, values] of Object.entries(data || {})) {
+    if (colId === 'id' || !Array.isArray(values)) continue;
+    let filled = 0, errors = 0;
+    for (const v of values) {
+      if (isErrorValue(v)) errors++;
+      else if (!isEmptyValue(v)) filled++;
+    }
+    cols[colId] = { filled, errors };
+  }
+  return { rows, cols };
+}
+
+// Construit le modèle de structure à partir des tables de métadonnées _grist_* (en lignes).
+function buildModel(meta, stats, docName) {
+  stats = stats || {};
+  const byId = rows => new Map((rows || []).map(r => [r.id, r]));
+  const tablesById = byId(meta.tables);
+  const colsById = byId(meta.columns);
+  const sectionsById = byId(meta.sections);
+  const viewsById = byId(meta.views);
+  const colIdOf = ref => (colsById.get(ref) || {}).colId || '';
+  const tableIdOf = ref => (tablesById.get(ref) || {}).tableId || '';
+
+  const docInfo = (meta.docInfo || [])[0] || {};
+  const docSettings = parseJSON(docInfo.documentSettings, {});
+
+  // Pages (ordre de _grist_Pages) et sections affichées.
+  const pages = (meta.pages || []).slice().sort((a, b) => (a.pagePos || 0) - (b.pagePos || 0))
+    .map(p => ({ ref: p.viewRef, name: (viewsById.get(p.viewRef) || {}).name || '(sans nom)', indentation: p.indentation || 0 }));
+  const pageByView = new Map(pages.map(p => [p.ref, p]));
+
+  const conditionalRules = (ruleRefs, rulesOptions) => listValues(ruleRefs).map((ref, i) => ({
+    formula: (colsById.get(ref) || {}).formula || '',
+    style: styleText((rulesOptions || [])[i]),
+  }));
+
+  // Colonnes par table.
+  const colsByTable = new Map();
+  for (const c of meta.columns || []) {
+    if (!colsByTable.has(c.parentId)) colsByTable.set(c.parentId, []);
+    colsByTable.get(c.parentId).push(c);
+  }
+
+  const tables = (meta.tables || []).slice().sort((a, b) => String(a.tableId).localeCompare(String(b.tableId)))
+    .map(t => {
+      const st = stats[t.tableId] || null;
+      const allCols = (colsByTable.get(t.id) || []).slice().sort((a, b) => (a.parentPos || 0) - (b.parentPos || 0));
+      // Colonnes techniques : aides de Grist, tri manuel, et `group` des tables résumées.
+      const isHelper = c => HELPER_COL_RE.test(c.colId) || (!!t.summarySourceTable && c.colId === 'group');
+      const helperCount = allCols.filter(isHelper).length;
+      const columns = allCols.filter(c => !isHelper(c)).map(c => {
+        const ti = typeInfo(c.type);
+        const formula = String(c.formula || '');
+        const opts = parseJSON(c.widgetOptions, {});
+        let nature, trigger = '';
+        if (c.isFormula) nature = formula.trim() ? 'formule' : 'vide';
+        else if (formula.trim()) {
+          nature = 'déclenchement';
+          const deps = listValues(c.recalcDeps).map(colIdOf).filter(Boolean);
+          if (c.recalcWhen === 1) trigger = 'jamais recalculée (déclenchement désactivé)';
+          else if (c.recalcWhen === 2) trigger = 'à chaque modification de la ligne';
+          else trigger = deps.length ? 'à la création et quand ' + deps.join(', ') + ' change' : 'à la création de la ligne';
+        } else nature = 'donnée';
+
+        const details = [];
+        if (ti.base === 'Ref' || ti.base === 'RefList') {
+          details.push(c.visibleCol ? 'affiche ' + colIdOf(c.visibleCol) : 'affiche id (numéro de ligne)');
+          if (c.reverseCol) {
+            const rc = colsById.get(c.reverseCol);
+            if (rc) details.push('bidirectionnelle ↔ ' + tableIdOf(rc.parentId) + '.' + rc.colId);
+          }
+        }
+        if ((ti.base === 'Choice' || ti.base === 'ChoiceList') && Array.isArray(opts.choices)) {
+          details.push('choix (' + opts.choices.length + ') : ' + opts.choices.join(', '));
+        }
+        if (opts.widget && !['TextBox', 'Reference', 'ReferenceList'].includes(opts.widget)) details.push('affichage ' + opts.widget);
+        if (opts.numMode) details.push('format ' + opts.numMode + (opts.currency ? ' ' + opts.currency : ''));
+        if (opts.dateFormat) details.push('date ' + opts.dateFormat + (opts.timeFormat ? ' ' + opts.timeFormat : ''));
+        if (c.summarySourceCol) details.push('colonne de regroupement');
+
+        const cs = st && st.cols[c.colId];
+        return {
+          colId: c.colId, label: c.label || '', type: ti, nature, formula, trigger,
+          description: c.description || '', details,
+          conditional: conditionalRules(c.rules, opts.rulesOptions),
+          filled: cs ? cs.filled : null, errors: cs ? cs.errors : null,
+        };
+      });
+      const rawSection = sectionsById.get(t.rawViewSectionRef) || {};
+      const summarySource = t.summarySourceTable ? tableIdOf(t.summarySourceTable) : '';
+      return {
+        ref: t.id, tableId: t.tableId, isSummary: !!t.summarySourceTable, summarySource,
+        groupBy: summarySource ? columns.filter(c => c.details.includes('colonne de regroupement')).map(c => c.colId) : [],
+        onDemand: !!t.onDemand, description: rawSection.description || '',
+        rowCount: st ? st.rows : null, helperCount, columns, pages: [],
+      };
+    });
+  const tableByRef = new Map(tables.map(t => [t.ref, t]));
+  const tableById = new Map(tables.map(t => [t.tableId, t]));
+
+  // Relations (références et résumés).
+  const relations = [];
+  for (const t of tables) {
+    for (const c of t.columns) {
+      if ((c.type.base === 'Ref' || c.type.base === 'RefList') && c.type.target) {
+        relations.push({ from: t.tableId, col: c.colId, to: c.type.target, kind: c.type.base, formula: c.nature === 'formule' });
+      }
+    }
+    if (t.isSummary && t.summarySource) relations.push({ from: t.tableId, col: '', to: t.summarySource, kind: 'summary' });
+  }
+
+  // Widgets des pages.
+  const fieldsBySection = new Map();
+  for (const f of meta.fields || []) {
+    if (!fieldsBySection.has(f.parentId)) fieldsBySection.set(f.parentId, []);
+    fieldsBySection.get(f.parentId).push(f);
+  }
+  const filtersBySection = new Map();
+  for (const f of meta.filters || []) {
+    if (!filtersBySection.has(f.viewSectionRef)) filtersBySection.set(f.viewSectionRef, []);
+    filtersBySection.get(f.viewSectionRef).push(f);
+  }
+  const sectionTitle = s => {
+    const t = tableByRef.get(s.tableRef);
+    return s.title || ((t ? t.tableId : '?') + ' (' + (SECTION_KINDS[s.parentKey] || s.parentKey) + ', titre par défaut)');
+  };
+
+  for (const p of pages) p.sections = [];
+  for (const s of (meta.sections || []).slice().sort((a, b) => a.id - b.id)) {
+    const page = pageByView.get(s.parentId);
+    if (!page) continue; // sections brutes, fiches de référence, vues hors pages
+    const t = tableByRef.get(s.tableRef);
+    if (t && !t.pages.includes(page.name)) t.pages.push(page.name);
+    const opts = parseJSON(s.options, {});
+    const fields = (fieldsBySection.get(s.id) || []).slice().sort((a, b) => (a.parentPos || 0) - (b.parentPos || 0));
+    const shownCols = new Set(fields.map(f => colIdOf(f.colRef)));
+
+    const sec = {
+      ref: s.id, title: sectionTitle(s), hasTitle: !!s.title, kind: s.parentKey,
+      kindLabel: (SECTION_KINDS[s.parentKey] || s.parentKey) + (s.parentKey === 'chart' && s.chartType ? ' (' + s.chartType + ')' : ''),
+      tableId: t ? t.tableId : '', description: s.description || '',
+      link: null, sort: [], filters: [], hiddenCols: [], rowRules: [], fieldRules: [], custom: null,
+    };
+    if (s.linkSrcSectionRef) {
+      const src = sectionsById.get(s.linkSrcSectionRef);
+      sec.link = {
+        srcRef: s.linkSrcSectionRef,
+        source: src ? sectionTitle(src) : '?',
+        srcCol: s.linkSrcColRef ? colIdOf(s.linkSrcColRef) : '',
+        targetCol: s.linkTargetColRef ? colIdOf(s.linkTargetColRef) : '',
+      };
+    }
+    for (const x of listValues(parseJSON(s.sortColRefs, []))) {
+      const n = parseInt(String(x), 10);
+      if (n) sec.sort.push({ colId: colIdOf(Math.abs(n)), desc: n < 0 });
+    }
+    for (const f of filtersBySection.get(s.id) || []) {
+      sec.filters.push({ colId: colIdOf(f.colRef), filter: f.filter || '', pinned: !!f.pinned });
+    }
+    if (t && ['record', 'detail', 'single', 'form'].includes(s.parentKey)) {
+      sec.hiddenCols = t.columns.map(c => c.colId).filter(id => !shownCols.has(id));
+    }
+    sec.rowRules = conditionalRules(s.rules, opts.rulesOptions);
+    for (const f of fields) {
+      const fo = parseJSON(f.widgetOptions, {});
+      for (const r of conditionalRules(f.rules, fo.rulesOptions)) sec.fieldRules.push({ colId: colIdOf(f.colRef), ...r });
+    }
+    if (s.parentKey === 'custom') {
+      const cv = parseJSON(opts.customView, {}) || {};
+      sec.custom = {
+        url: cv.url || (cv.widgetDef && cv.widgetDef.url) || '',
+        name: (cv.widgetDef && cv.widgetDef.name) || cv.widgetId || '',
+        access: cv.access || (cv.widgetDef && cv.widgetDef.accessLevel) || '',
+        plugin: cv.pluginId || '',
+      };
+    }
+    page.sections.push(sec);
+  }
+
+  // Règles d'accès.
+  const resources = byId(meta.aclResources);
+  const aclRules = (meta.aclRules || []).slice().sort((a, b) => (a.rulePos || 0) - (b.rulePos || 0));
+  const userAttributes = [];
+  const aclGroups = new Map();
+  for (const r of aclRules) {
+    const ua = parseJSON(r.userAttributes, null);
+    if (ua && ua.name) { userAttributes.push(ua); continue; }
+    const res = resources.get(r.resource);
+    if (!res) continue;
+    let label;
+    if (res.tableId === '*') label = 'Document entier (règles par défaut)';
+    else if (res.tableId === '*SPECIAL') label = 'Règle spéciale ' + res.colIds;
+    else label = 'Table ' + res.tableId + (res.colIds && res.colIds !== '*' ? ', colonnes ' + res.colIds : '');
+    if (!aclGroups.has(label)) aclGroups.set(label, []);
+    aclGroups.get(label).push({ formula: r.aclFormula || '', permissions: r.permissionsText || '', memo: r.memo || '' });
+  }
+  const acl = { userAttributes, groups: [...aclGroups].map(([resource, rules]) => ({ resource, rules })) };
+
+  // Déclencheurs (webhooks).
+  const triggers = (meta.triggers || []).map(tr => ({
+    table: tableIdOf(tr.tableRef), label: tr.label || '', memo: tr.memo || '',
+    events: listValues(tr.eventTypes), readyCol: tr.isReadyColumn ? colIdOf(tr.isReadyColumn) : '',
+    watched: listValues(tr.watchedColRefs).map(colIdOf).filter(Boolean),
+    enabled: tr.enabled !== false,
+    actions: (parseJSON(tr.actions, []) || []).map(a => a.type || '?'),
+  }));
+
+  const attachments = {
+    count: (meta.attachments || []).length,
+    size: (meta.attachments || []).reduce((s, a) => s + (a.fileSize || 0), 0),
+  };
+
+  return {
+    docName: docName || '', timezone: docInfo.timezone || '', locale: docSettings.locale || '',
+    tables, relations, pages, acl, triggers, attachments,
+    orphanTables: tables.filter(t => !t.pages.length).map(t => t.tableId),
+    widgetCount: pages.reduce((n, p) => n + p.sections.length, 0),
+    _tableById: tableById,
+  };
+}
+
+// Dépendances approximatives des formules : liste d'arêtes { from: 'T.C' | 'T', to: 'T.C' }.
+function formulaDeps(model) {
+  const cols = new Map(); // tableId → Map(colId → colonne)
+  for (const t of model.tables) cols.set(t.tableId, new Map(t.columns.map(c => [c.colId, c])));
+  const edges = [];
+  const seen = new Set();
+  const add = (from, to) => { const k = from + '→' + to; if (from !== to && !seen.has(k)) { seen.add(k); edges.push({ from, to }); } };
+
+  for (const t of model.tables) {
+    for (const c of t.columns) {
+      if (!c.formula.trim() || c.nature === 'vide') continue;
+      const to = t.tableId + '.' + c.colId;
+      // Supprime les commentaires et les chaînes pour limiter les faux positifs.
+      const code = c.formula.replace(/#[^\n]*/g, '').replace(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g, '""');
+
+      // $Col, $Ref.Col, rec.Col…
+      for (const m of code.matchAll(/(?:\$|\brec\.)([A-Za-z_]\w*)((?:\.[A-Za-z_]\w*)*)/g)) {
+        let table = t.tableId;
+        const chain = [m[1], ...m[2].split('.').filter(Boolean)];
+        for (const part of chain) {
+          const col = cols.get(table) && cols.get(table).get(part);
+          if (!col) break;
+          add(table + '.' + part, to);
+          if (!col.type.target || !cols.has(col.type.target)) break;
+          table = col.type.target;
+        }
+      }
+      // Table.lookupOne(...), Table.lookupRecords(...), Table.all
+      for (const m of code.matchAll(/\b([A-Za-z_]\w*)\.(lookupOne|lookupRecords|all)\b(?:\(([^()]*)\))?((?:\.[A-Za-z_]\w*)*)/g)) {
+        const u = m[1];
+        if (!cols.has(u)) continue;
+        let specific = false;
+        for (const a of (m[3] || '').matchAll(/([A-Za-z_]\w*)\s*=(?!=)/g)) {
+          if (cols.get(u).has(a[1])) { add(u + '.' + a[1], to); specific = true; }
+        }
+        const first = (m[4] || '').split('.').filter(Boolean)[0];
+        if (first && cols.get(u).has(first)) { add(u + '.' + first, to); specific = true; }
+        if (!specific || m[2] === 'all') add(u, to);
+      }
+    }
+  }
+  return edges;
+}
+
+const mdCell = s => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+const pct = (n, d) => (d ? Math.round((100 * n) / d) + ' %' : '—');
+
+function fence(code, lang) {
+  const ticks = /```/.test(code) ? '~~~' : '```';
+  return ticks + (lang || '') + '\n' + code.replace(/\s+$/, '') + '\n' + ticks;
+}
+
+// Description Markdown de la structure (sans aucune valeur de cellule).
+function structureMarkdown(model) {
+  const L = [];
+  const colCount = model.tables.reduce((n, t) => n + t.columns.length, 0);
+  const summaries = model.tables.filter(t => t.isSummary).length;
+  const aclCount = model.acl.groups.reduce((n, g) => n + g.rules.length, 0);
+
+  L.push('### Vue d\'ensemble', '');
+  L.push('- Nom du document : ' + (model.docName || '(inconnu)'));
+  if (model.timezone) L.push('- Fuseau horaire : ' + model.timezone);
+  if (model.locale) L.push('- Paramètres régionaux : ' + model.locale);
+  L.push('- Tables : ' + model.tables.length + (summaries ? ' (dont ' + summaries + ' résumée' + (summaries > 1 ? 's' : '') + ')' : '') + ' ; colonnes : ' + colCount);
+  L.push('- Pages : ' + model.pages.length + ' ; widgets sur les pages : ' + model.widgetCount);
+  L.push('- Règles d\'accès : ' + aclCount + (model.acl.userAttributes.length ? ' ; attributs utilisateur : ' + model.acl.userAttributes.length : ''));
+  L.push('- Webhooks / déclencheurs : ' + model.triggers.length);
+  L.push('- Pièces jointes : ' + model.attachments.count + ' (' + formatSize(model.attachments.size) + ')');
+  L.push('- Tables affichées sur aucune page : ' + (model.orphanTables.length ? model.orphanTables.map(x => '`' + x + '`').join(', ') : 'aucune'));
+  L.push('');
+
+  L.push('### Tables', '');
+  for (const t of model.tables) {
+    L.push('#### Table `' + t.tableId + '`' + (t.rowCount !== null ? ' — ' + t.rowCount + ' ligne' + (t.rowCount > 1 ? 's' : '') : ''), '');
+    if (t.isSummary) L.push('- Table résumée de `' + t.summarySource + '`, regroupée par ' + (t.groupBy.length ? t.groupBy.map(x => '`' + x + '`').join(', ') : '(aucune colonne : total général)'));
+    if (t.onDemand) L.push('- Table « à la demande » (chargée sans calcul des formules)');
+    if (t.description) L.push('- Description : ' + t.description.replace(/\s*\n\s*/g, ' '));
+    L.push('- Pages : ' + (t.pages.length ? t.pages.map(p => '« ' + p + ' »').join(', ') : 'aucune'));
+    if (t.helperCount) L.push('- Colonnes techniques omises : ' + t.helperCount);
+    L.push('');
+    L.push('| Colonne (id) | Libellé | Type | Nature | Remplissage | Erreurs | Détails | Description |');
+    L.push('|---|---|---|---|---|---|---|---|');
+    for (const c of t.columns) {
+      const nature = c.nature === 'vide' ? 'vide (jamais typée)' : c.nature;
+      L.push('| `' + mdCell(c.colId) + '` | ' + mdCell(c.label !== c.colId ? c.label : '') + ' | ' + mdCell(c.type.raw) +
+        ' | ' + nature + ' | ' + (c.filled !== null && c.nature !== 'formule' ? pct(c.filled, t.rowCount) : '—') +
+        ' | ' + (c.errors ? c.errors : (c.errors === 0 ? '0' : '—')) + ' | ' + mdCell(c.details.join(' ; ')) + ' | ' + mdCell(c.description) + ' |');
+    }
+    L.push('');
+    const withFormula = t.columns.filter(c => c.formula.trim() && c.nature !== 'vide');
+    if (withFormula.length) {
+      L.push('Formules :', '');
+      for (const c of withFormula) {
+        L.push('- `' + c.colId + '` (' + (c.nature === 'formule' ? 'colonne formule' : 'formule de déclenchement, ' + c.trigger) + ') :');
+        L.push(fence(c.formula, 'python').replace(/^/gm, '  '));
+      }
+      L.push('');
+    }
+    const cond = t.columns.filter(c => c.conditional.length);
+    if (cond.length) {
+      L.push('Formats conditionnels des colonnes :', '');
+      for (const c of cond) for (const r of c.conditional) L.push('- `' + c.colId + '` : si `' + mdCell(r.formula) + '` → ' + (r.style || 'style non défini'));
+      L.push('');
+    }
+  }
+
+  L.push('### Relations', '');
+  if (!model.relations.length) L.push('Aucune relation (aucune colonne Référence ni table résumée).');
+  for (const r of model.relations) {
+    if (r.kind === 'summary') L.push('- `' + r.from + '` est une table résumée de `' + r.to + '`');
+    else L.push('- `' + r.from + '.' + r.col + '` → `' + r.to + '` (' + (r.kind === 'Ref' ? 'Référence' : 'Liste de références') + (r.formula ? ', calculée par formule' : '') + ')');
+  }
+  L.push('');
+
+  L.push('### Pages et widgets', '');
+  if (!model.pages.length) L.push('Aucune page.');
+  for (const p of model.pages) {
+    L.push('- **Page « ' + p.name + ' »**' + (p.indentation ? ' (sous-page, niveau ' + p.indentation + ')' : ''));
+    if (!p.sections.length) L.push('  - (aucun widget)');
+    for (const s of p.sections) {
+      L.push('  - Widget « ' + s.title + ' » — ' + s.kindLabel + (s.tableId ? ' — table `' + s.tableId + '`' : ''));
+      if (s.description) L.push('    - Description : ' + s.description.replace(/\s*\n\s*/g, ' '));
+      if (s.link) L.push('    - Sélectionné par « ' + s.link.source + ' » (' + (s.link.srcCol ? 'colonne `' + s.link.srcCol + '`' : 'ligne sélectionnée') + ' → ' + (s.link.targetCol ? 'colonne `' + s.link.targetCol + '`' : 'même ligne') + ')');
+      if (s.sort.length) L.push('    - Tri : ' + s.sort.map(x => '`' + x.colId + '` ' + (x.desc ? '↓' : '↑')).join(', '));
+      for (const f of s.filters) L.push('    - Filtre sur `' + f.colId + '`' + (f.pinned ? ' (épinglé)' : '') + ' : `' + mdCell(f.filter) + '`');
+      if (s.hiddenCols.length) L.push('    - Colonnes masquées : ' + s.hiddenCols.map(x => '`' + x + '`').join(', '));
+      for (const r of s.rowRules) L.push('    - Format conditionnel de ligne : si `' + mdCell(r.formula) + '` → ' + (r.style || 'style non défini'));
+      for (const r of s.fieldRules) L.push('    - Format conditionnel propre au widget sur `' + r.colId + '` : si `' + mdCell(r.formula) + '` → ' + (r.style || 'style non défini'));
+      if (s.custom) L.push('    - Widget personnalisé : ' + [s.custom.name && 'nom ' + s.custom.name, 'URL ' + (s.custom.url || '(non renseignée)'), 'niveau d\'accès ' + (s.custom.access || 'aucun')].filter(Boolean).join(' ; '));
+    }
+  }
+  L.push('');
+
+  L.push('### Règles d\'accès', '');
+  L.push('_Permissions : R = lire, U = modifier, C = créer, D = supprimer, S = modifier la structure ; « + » accorde, « - » refuse. Les règles d\'une ressource s\'appliquent dans l\'ordre ; la première condition vraie l\'emporte._', '');
+  if (!model.acl.groups.length && !model.acl.userAttributes.length) L.push('Aucune règle d\'accès personnalisée : chaque membre a les droits de son rôle (propriétaire, éditeur, lecteur) sur tout le document.');
+  for (const ua of model.acl.userAttributes) {
+    L.push('- Attribut utilisateur `user.' + ua.name + '` : ligne de `' + ua.tableId + '` dont `' + ua.lookupColId + '` = `user.' + ua.charId + '`');
+  }
+  for (const g of model.acl.groups) {
+    L.push('- ' + g.resource + ' :');
+    g.rules.forEach((r, i) => L.push('  ' + (i + 1) + '. ' + (r.formula ? 'si `' + mdCell(r.formula) + '`' : 'sinon (tous les cas)') + ' → `' + (r.permissions || '(aucune)') + '`' + (r.memo ? ' — message : « ' + mdCell(r.memo) + ' »' : '')));
+  }
+  L.push('');
+
+  L.push('### Webhooks et déclencheurs', '');
+  if (!model.triggers.length) L.push('Aucun.');
+  for (const tr of model.triggers) {
+    L.push('- Table `' + tr.table + '`' + (tr.label ? ' « ' + tr.label + ' »' : '') + ' : événements ' + (tr.events.join(', ') || '?') +
+      ' ; actions ' + (tr.actions.join(', ') || 'aucune') + (tr.readyCol ? ' ; colonne « prêt » `' + tr.readyCol + '`' : ' ; pas de colonne « prêt »') +
+      (tr.watched.length ? ' ; colonnes surveillées ' + tr.watched.map(x => '`' + x + '`').join(', ') : '') + (tr.enabled ? '' : ' ; désactivé') +
+      (tr.memo ? ' ; note : ' + mdCell(tr.memo) : ''));
+  }
+  return L.join('\n');
+}
+
+// Prompt complet à copier dans une IA.
+function buildPrompt(model, context, referentiel) {
+  const ctx = String(context || '').trim();
+  const ref = String(referentiel || '').trim().replace(/^(#{1,4}) /gm, '$1## ');
+  return [
+    '# Audit de conception d\'un document Grist — « ' + (model.docName || 'sans nom') + ' »',
+    '',
+    'Tu es un expert en conception de bases de données relationnelles et en **Grist** (tableur-base de données open source ; instance utilisée : grist.numerique.gouv.fr). Je te fournis la **structure complète** d\'un document Grist, sans aucune donnée des cellules, un **référentiel de bonnes pratiques** et le **contexte** du projet.',
+    '',
+    '## Ta mission',
+    '',
+    'Évalue la conception de ce document au regard du référentiel, puis aide-moi à l\'améliorer. Réponds **en français**, en Markdown, avec exactement les sections suivantes :',
+    '',
+    '1. **Note globale sur 20**, calculée avec le barème du référentiel (partir de 20 ; −4 par règle 🔴 non respectée, −2 par règle 🟠, −0,5 par règle 🟡, 0 pour 🔵 ; une fois par règle et non par occurrence ; plancher à 0). Donne le détail du calcul, puis une appréciation en deux ou trois phrases.',
+    '2. **Points forts** : ce qui est bien conçu, avec les règles concernées.',
+    '3. **Problèmes classés par gravité** : 🔴 Critique, puis 🟠 Majeur, puis 🟡 Mineur. Pour chaque problème :',
+    '   - l\'identifiant de la règle (ex. R2, G11) et un titre court ;',
+    '   - les éléments concernés, nommés précisément (`Table.colonne`, page, widget) ;',
+    '   - pourquoi c\'est un problème dans ce document ;',
+    '   - la **correction pas à pas** dans l\'interface de Grist (libellés des menus en français), avec les formules à saisir le cas échéant ;',
+    '   - les précautions : travailler sur une copie, effets sur les formules, widgets personnalisés ou intégrations.',
+    '4. **Suggestions** (🔵) : améliorations facultatives. Si le document respecte déjà les bonnes pratiques, cette section devient le cœur de ta réponse : propose des pistes concrètes pour aller plus loin.',
+    '5. **Points à vérifier par le propriétaire** : ce que la structure seule ne permet pas de juger (voir « Limites de la collecte »), sans les pénaliser dans la note.',
+    '6. **Plan d\'action** : les corrections dans l\'ordre conseillé (d\'abord les plus critiques et les plus simples), sous forme de liste à cocher.',
+    '',
+    'Règles pour ton analyse :',
+    '- Appuie-toi uniquement sur la structure fournie ; n\'invente ni table, ni colonne, ni valeur. Signale tes hypothèses (par exemple sur le sens d\'un nom de colonne).',
+    '- Tiens compte du contexte : une règle peut ne pas s\'appliquer ; dis alors pourquoi tu ne la pénalises pas.',
+    '- Les colonnes techniques de Grist (`manualSort`, `gristHelper_*`, `group` des tables résumées) sont volontairement omises : ne les signale pas.',
+    '- Les indices de « détection » du référentiel sont des pistes, pas des preuves : confirme-les avec l\'ensemble de la structure.',
+    '- Regroupe les occurrences d\'un même problème au lieu de les répéter.',
+    '- S\'il te manque une information pour conclure, pose-moi la question à la fin de ta réponse.',
+    '',
+    '## Contexte du projet',
+    '',
+    ctx || '_Non renseigné. Déduis l\'usage probable à partir des noms des tables et des colonnes, et présente-le comme une hypothèse au début de ta réponse._',
+    '',
+    '## Limites de la collecte',
+    '',
+    '- Aucune valeur de cellule n\'est fournie : seulement la structure et des statistiques (nombre de lignes ; par colonne, taux de remplissage et nombre de cellules en erreur).',
+    '- **Taux de remplissage** : part des lignes dont la cellule n\'a pas la valeur par défaut de Grist (vide, 0, faux, référence vide, liste vide). Pour une colonne Numérique, Entier ou Interrupteur, un taux bas peut donc venir de 0 ou de « faux » légitimes. Il n\'est pas calculé pour les colonnes formules.',
+    '- Les formules, filtres, listes de choix et règles d\'accès sont fournis tels quels : ils peuvent contenir quelques valeurs.',
+    '- Non accessibles : les **partages** du document (membres, rôles, lien public : règle G19), l\'**historique des versions** et les **URL des webhooks**.',
+    '- Les dépendances entre formules ne sont pas listées : déduis-les du texte des formules.',
+    '',
+    '## Référentiel de bonnes pratiques',
+    '',
+    ref,
+    '',
+    '## Structure du document',
+    '',
+    structureMarkdown(model),
+    '',
+  ].join('\n');
+}
+
+// Schéma des tables au format Mermaid (erDiagram).
+function buildMermaid(model) {
+  const id = s => String(s).replace(/[^A-Za-z0-9_]/g, '_');
+  const L = ['erDiagram'];
+  for (const t of model.tables) {
+    L.push('  ' + id(t.tableId) + ' {');
+    for (const c of t.columns) {
+      L.push('    ' + id(c.type.raw) + ' ' + id(c.colId) + (c.nature === 'formule' ? ' "formule"' : c.nature === 'déclenchement' ? ' "déclenchement"' : ''));
+    }
+    L.push('  }');
+  }
+  for (const r of model.relations) {
+    if (r.kind === 'summary') L.push('  ' + id(r.from) + ' }o--|| ' + id(r.to) + ' : "résumé de"');
+    else L.push('  ' + id(r.from) + (r.kind === 'Ref' ? ' }o--o| ' : ' }o--o{ ') + id(r.to) + ' : "' + r.col + '"');
+  }
+  return L.join('\n') + '\n';
+}
+
+if (typeof module !== 'undefined') module.exports = {
+  columnsToRows, parseJSON, listValues, isEmptyValue, isErrorValue, typeInfo, computeTableStats,
+  buildModel, formulaDeps, structureMarkdown, buildPrompt, buildMermaid, formatSize,
+};
+</script>
 
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+const LS = { context: 'checkupWidgetContext', tab: 'checkupWidgetTab', graph: 'checkupWidgetGraph' };
+const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* stockage indisponible */ } };
+
+let model = null;
+let loading = false;
+
 function showMsg(text, isError) {
   const m = $('msg');
-  m.textContent = text;
+  m.textContent = text || '';
   m.className = isError ? 'error' : '';
   m.hidden = !text;
+}
+
+let toastTimer = null;
+function toast(text, isError) {
+  const t = $('toast');
+  t.textContent = text;
+  t.className = 'show' + (isError ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = ''; }, isError ? 5000 : 2000);
 }
 
 // --- Chargement de l'API Grist (SPEC § 3.2) ---
@@ -77,6 +1036,221 @@ async function loadGristApi() {
   return false;
 }
 
+// --- Collecte (lecture seule : uniquement fetchTable / getDocName) ---
+const META_TABLES = {
+  tables: '_grist_Tables', columns: '_grist_Tables_column', views: '_grist_Views',
+  sections: '_grist_Views_section', fields: '_grist_Views_section_field', filters: '_grist_Filters',
+  pages: '_grist_Pages', aclResources: '_grist_ACLResources', aclRules: '_grist_ACLRules',
+  triggers: '_grist_Triggers', docInfo: '_grist_DocInfo', attachments: '_grist_Attachments',
+};
+
+async function collect() {
+  const meta = {};
+  try {
+    meta.tables = columnsToRows(await grist.docApi.fetchTable('_grist_Tables'));
+  } catch (e) {
+    throw new Error('ACCESS');
+  }
+  for (const [key, name] of Object.entries(META_TABLES)) {
+    if (key === 'tables') continue;
+    try { meta[key] = columnsToRows(await grist.docApi.fetchTable(name)); } catch (e) { meta[key] = []; }
+  }
+  let docName = '';
+  try { docName = await grist.docApi.getDocName(); } catch (e) { /* nom indisponible */ }
+
+  // Statistiques : les données de chaque table sont lues puis réduites à des nombres, jamais conservées.
+  const stats = {};
+  let i = 0;
+  for (const t of meta.tables) {
+    i++;
+    showMsg('Lecture des statistiques : ' + t.tableId + ' (' + i + '/' + meta.tables.length + ')…');
+    try { stats[t.tableId] = computeTableStats(await grist.docApi.fetchTable(t.tableId)); } catch (e) { /* table illisible */ }
+  }
+  return buildModel(meta, stats, docName);
+}
+
+async function refresh() {
+  if (loading) return;
+  loading = true;
+  $('refresh').disabled = true;
+  showMsg('Lecture de la structure…');
+  try {
+    model = await collect();
+    const title = 'Checkup du projet ' + (model.docName || '');
+    $('title').textContent = title;
+    document.title = title.trim() + ' pour Grist';
+    $('main').hidden = false;
+    showMsg('');
+    renderStructure();
+    renderPrompt();
+    graphDirty = true;
+    if (currentTab === 'schema') renderGraph();
+  } catch (e) {
+    $('main').hidden = true;
+    if (e.message === 'ACCESS') {
+      showMsg('Ce widget a besoin de l\'accès complet pour lire la structure du document (il ne modifie rien). ' +
+        'Dans le panneau de droite, onglet « Widget », choisis le niveau d\'accès « Accès complet au document ».', true);
+    } else {
+      showMsg('Erreur : ' + e.message, true);
+    }
+  } finally {
+    loading = false;
+    $('refresh').disabled = false;
+  }
+}
+
+// --- Onglets ---
+let currentTab = 'structure';
+function showTab(name) {
+  currentTab = name;
+  lsSet(LS.tab, name);
+  for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('active', b.dataset.tab === name);
+  for (const s of document.querySelectorAll('.tab')) s.hidden = s.id !== 'tab-' + name;
+  if (name === 'schema' && model) renderGraph();
+}
+
+// --- Onglet Structure ---
+function natureBadge(c) {
+  const cls = { 'formule': 'formule', 'déclenchement': 'declenchement', 'vide': 'vide' }[c.nature] || '';
+  const label = c.nature === 'vide' ? 'vide (jamais typée)' : c.nature;
+  return '<span class="badge ' + cls + '">' + esc(label) + '</span>';
+}
+
+function renderStructure() {
+  const m = model;
+  const colCount = m.tables.reduce((n, t) => n + t.columns.length, 0);
+  const aclCount = m.acl.groups.reduce((n, g) => n + g.rules.length, 0);
+  const card = (n, label) => '<div class="card"><b>' + esc(n) + '</b><span class="muted small">' + esc(label) + '</span></div>';
+  const h = [];
+  h.push('<div class="cards">',
+    card(m.tables.length, 'tables'), card(colCount, 'colonnes'), card(m.relations.filter(r => r.kind !== 'summary').length, 'références'),
+    card(m.pages.length, 'pages'), card(m.widgetCount, 'widgets'), card(aclCount, 'règles d\'accès'),
+    card(m.triggers.length, 'webhooks'), card(m.attachments.count, 'pièces jointes (' + formatSize(m.attachments.size) + ')'), '</div>');
+  if (m.timezone) h.push('<p class="muted small">Fuseau horaire : ' + esc(m.timezone) + (m.locale ? ' · paramètres régionaux : ' + esc(m.locale) : '') + '</p>');
+  if (m.orphanTables.length) h.push('<p class="small">Tables affichées sur aucune page : ' + m.orphanTables.map(x => '<code>' + esc(x) + '</code>').join(', ') + '</p>');
+
+  h.push('<h2>Tables</h2>');
+  for (const t of m.tables) {
+    h.push('<details><summary><b>' + esc(t.tableId) + '</b> <span class="muted small">— ' +
+      (t.rowCount !== null ? esc(t.rowCount) + ' lignes · ' : '') + t.columns.length + ' colonnes' +
+      (t.isSummary ? ' · résumé de ' + esc(t.summarySource) : '') + '</span></summary><div class="inner">');
+    if (t.description) h.push('<p class="small">' + esc(t.description) + '</p>');
+    h.push('<p class="muted small">Pages : ' + (t.pages.length ? t.pages.map(esc).join(', ') : 'aucune') +
+      (t.isSummary ? ' · regroupée par ' + (t.groupBy.map(esc).join(', ') || '(total général)') : '') + '</p>');
+    h.push('<table class="grid"><tr><th>Colonne</th><th>Libellé</th><th>Type</th><th>Nature</th><th>Rempl.</th><th>Err.</th><th>Détails</th></tr>');
+    for (const c of t.columns) {
+      const fill = c.filled !== null && c.nature !== 'formule' && t.rowCount ? Math.round(100 * c.filled / t.rowCount) + ' %' : '—';
+      h.push('<tr><td><code>' + esc(c.colId) + '</code></td><td>' + esc(c.label !== c.colId ? c.label : '') + '</td><td>' + esc(c.type.label) +
+        '</td><td>' + natureBadge(c) + '</td><td>' + fill + '</td><td>' + (c.errors ? '<b style="color:var(--danger)">' + c.errors + '</b>' : (c.errors === 0 ? '0' : '—')) +
+        '</td><td class="small">' + esc(c.details.join(' ; ')) + (c.description ? '<br><i>' + esc(c.description) + '</i>' : '') +
+        (c.formula.trim() && c.nature !== 'vide' ? '<pre class="formula">' + esc(c.formula) + '</pre>' + (c.trigger ? '<span class="muted">' + esc(c.trigger) + '</span>' : '') : '') +
+        c.conditional.map(r => '<div class="muted">format : si <code>' + esc(r.formula) + '</code> → ' + esc(r.style || '—') + '</div>').join('') +
+        '</td></tr>');
+    }
+    h.push('</table></div></details>');
+  }
+
+  h.push('<h2>Pages et widgets</h2>');
+  if (!m.pages.length) h.push('<p class="muted">Aucune page.</p>');
+  for (const p of m.pages) {
+    h.push('<details' + (p.indentation ? ' style="margin-left:' + (p.indentation * 16) + 'px"' : '') + '><summary><b>' + esc(p.name) + '</b> <span class="muted small">— ' +
+      p.sections.length + ' widget' + (p.sections.length > 1 ? 's' : '') + '</span></summary><div class="inner"><ul class="tree">');
+    for (const s of p.sections) {
+      const sub = [];
+      if (s.link) sub.push('sélectionné par « ' + esc(s.link.source) + ' »' + (s.link.targetCol ? ' via <code>' + esc(s.link.targetCol) + '</code>' : ''));
+      if (s.sort.length) sub.push('tri : ' + s.sort.map(x => esc(x.colId) + (x.desc ? ' ↓' : ' ↑')).join(', '));
+      if (s.filters.length) sub.push('filtres : ' + s.filters.map(f => esc(f.colId)).join(', '));
+      if (s.hiddenCols.length) sub.push('masquées : ' + s.hiddenCols.map(esc).join(', '));
+      if (s.rowRules.length || s.fieldRules.length) sub.push((s.rowRules.length + s.fieldRules.length) + ' format(s) conditionnel(s)');
+      if (s.custom) sub.push('URL : <code>' + esc(s.custom.url || '—') + '</code> · accès : ' + esc(s.custom.access || 'aucun'));
+      h.push('<li><b>' + esc(s.title) + '</b> <span class="muted">— ' + esc(s.kindLabel) + (s.tableId ? ' · ' + esc(s.tableId) : '') + '</span>' +
+        (sub.length ? '<div class="small muted">' + sub.join(' · ') + '</div>' : '') + '</li>');
+    }
+    h.push('</ul></div></details>');
+  }
+
+  h.push('<h2>Règles d\'accès</h2>');
+  if (!m.acl.groups.length && !m.acl.userAttributes.length) h.push('<p class="muted">Aucune règle d\'accès personnalisée.</p>');
+  if (m.acl.userAttributes.length) {
+    h.push('<p class="small">Attributs utilisateur : ' + m.acl.userAttributes.map(u => '<code>user.' + esc(u.name) + '</code> (' + esc(u.tableId) + ')').join(', ') + '</p>');
+  }
+  for (const g of m.acl.groups) {
+    h.push('<details><summary>' + esc(g.resource) + ' <span class="muted small">— ' + g.rules.length + ' règle(s)</span></summary><div class="inner"><ol class="small">');
+    for (const r of g.rules) h.push('<li>' + (r.formula ? 'si <code>' + esc(r.formula) + '</code>' : 'sinon') + ' → <code>' + esc(r.permissions) + '</code>' + (r.memo ? ' <span class="muted">« ' + esc(r.memo) + ' »</span>' : '') + '</li>');
+    h.push('</ol></div></details>');
+  }
+
+  h.push('<h2>Webhooks et déclencheurs</h2>');
+  if (!m.triggers.length) h.push('<p class="muted">Aucun.</p>');
+  else h.push('<ul class="small">' + m.triggers.map(tr => '<li><code>' + esc(tr.table) + '</code>' + (tr.label ? ' « ' + esc(tr.label) + ' »' : '') +
+    ' — ' + esc(tr.events.join(', ')) + (tr.readyCol ? ' · prêt : ' + esc(tr.readyCol) : '') + (tr.enabled ? '' : ' · désactivé') + '</li>').join('') + '</ul>');
+
+  $('tab-structure').innerHTML = h.join('');
+}
+
+// --- Onglet Prompt ---
+function renderPrompt() {
+  if (!model) return;
+  const text = buildPrompt(model, $('context').value, $('referentiel').textContent);
+  $('prompt').value = text;
+  $('prompt-size').textContent = text.length.toLocaleString('fr-FR') + ' caractères (≈ ' + Math.round(text.length / 3.5).toLocaleString('fr-FR') + ' jetons)';
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (err) { /* copie refusée */ }
+    ta.remove();
+    return ok;
+  }
+}
+
+function download(name, content, mime) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mime || 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function fileBase() {
+  return 'checkup-' + ((model && model.docName) || 'grist').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-|-$/g, '');
+}
+
+// --- Onglet Schéma (Cytoscape.js) ---
+let cy = null;
+let graphDirty = true;
+function renderGraph() {}
+
+// --- Événements ---
+document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => showTab(b.dataset.tab)));
+$('refresh').addEventListener('click', refresh);
+$('context').value = lsGet(LS.context) || '';
+let ctxTimer = null;
+$('context').addEventListener('input', () => {
+  clearTimeout(ctxTimer);
+  ctxTimer = setTimeout(() => { lsSet(LS.context, $('context').value); renderPrompt(); }, 300);
+});
+$('copy-prompt').addEventListener('click', async () => {
+  renderPrompt();
+  if (await copyText($('prompt').value)) toast('Prompt copié : colle-le dans ton IA.');
+  else { $('prompt').select(); toast('Copie automatique refusée : le texte est sélectionné, fais Ctrl/Cmd + C.', true); }
+});
+$('dl-prompt').addEventListener('click', () => { renderPrompt(); download(fileBase() + '-prompt.md', $('prompt').value, 'text/markdown;charset=utf-8'); });
+
 async function main() {
   if (window.self === window.top && !window.__GRIST_MOCK__) {
     showMsg('Ce widget doit être ouvert dans Grist : vue « Personnalisé » → URL personnalisée.', true);
@@ -86,9 +1260,11 @@ async function main() {
     showMsg("Impossible de charger l'API Grist. Vérifie ta connexion puis recharge la page.", true);
     return;
   }
-  // Accès complet nécessaire pour lire les tables _grist_* ; le widget n'écrit jamais.
+  // Accès complet nécessaire pour lire les tables _grist_* ; le widget n'écrit jamais dans le document.
   grist.ready({ requiredAccess: 'full', allowSelectBy: false });
-  showMsg('Widget prêt.');
+  const tab = lsGet(LS.tab);
+  if (['structure', 'prompt', 'schema'].includes(tab)) showTab(tab);
+  refresh();
 }
 
 main();
