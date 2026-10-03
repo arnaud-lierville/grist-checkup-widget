@@ -74,3 +74,7 @@ Les préférences (onglet, vue du schéma, contexte) sont enregistrées dans le 
 - Le **taux de remplissage** compte comme vides les valeurs par défaut de Grist (vide, 0, faux) : un taux bas sur une colonne Numérique ou Interrupteur peut être normal.
 - Sur un très gros document, la lecture des statistiques (toutes les tables) peut prendre quelques secondes, et le prompt peut dépasser la taille acceptée par certaines IA.
 - Conçu pour un usage sur ordinateur.
+
+## Licence
+
+[MIT](LICENSE)
